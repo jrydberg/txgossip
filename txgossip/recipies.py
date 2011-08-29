@@ -21,10 +21,12 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import fnmatch
+
 
 class LeaderElectionMixin:
     """Mixin for leader election among the nodes in the cluster.
-    
+
     The C{value_changed} method should be called when any of the
     related keys are changed in the key-stores.
 
@@ -39,7 +41,7 @@ class LeaderElectionMixin:
     election is over when all peers have reached a consensus on the
     C{leader-key} value.
     """
-    
+
     PRIO_KEY = 'leader:priority'
     VOTE_KEY = 'leader:vote'
     LEADER_KEY = 'leader:leader'
@@ -65,7 +67,7 @@ class LeaderElectionMixin:
             return None
         else:
             return correct
-        
+
     def value_changed(self, peer, key, value):
         """Inform about a change of a key-value pair.
 
@@ -77,7 +79,7 @@ class LeaderElectionMixin:
            was unrelated.
         """
         if key == self.VOTE_KEY:
-            leader = self._check_consensus(self.VOTE_KEY):
+            leader = self._check_consensus(self.VOTE_KEY)
             if leader:
                 self.gossiper.set_local_state(
                     self.LEADER_KEY, leader)
@@ -90,7 +92,7 @@ class LeaderElectionMixin:
             self.start_election()
 
         return key in (self.VOTE_KEY, self.LEADER_KEY, self.PRIO_KEY)
-        
+
     def _vote(self):
         """Perform an election."""
         self._election_timeout = None
@@ -101,7 +103,7 @@ class LeaderElectionMixin:
         try:
             curr = self.gossiper.get_local_value(self.PRIO_KEY)
             if curr is not None:
-                vote = self.gossiper.name 
+                vote = self.gossiper.name
         except KeyError:
             pass
 
@@ -158,7 +160,7 @@ class KeyStoreMixin:
 
     def __init__(self, clock, storage, ignore_keys=[]):
         """
-        
+
         @param clock: Something that can report the time, normally a
             Twisted reactor.
         @param storage: A backing storage object that responds to the
@@ -177,33 +179,38 @@ class KeyStoreMixin:
             return
         timestamp, value = timestamp_value
         if key in self._storage:
-            current_timestamp, current_value = self.storage[key]
+            current_timestamp, current_value = self._storage[key]
             if timestamp <= current_timestamp:
                 return
-        self.storage[key] = (timestamp, value)
+        self._storage[key] = (timestamp, value)
 
     def __setitem__(self, key, value):
         self.gossiper.set_local_state(key,
             (self.clock.seconds(), value))
 
     def __getitem__(self, key):
-        return self.storage[key][1]
+        return self._storage[key][1]
 
     def get(self, key, default=None):
-        if key in self.storage:
+        if key in self._storage:
             return self[key]
         return default
 
-    def keys(self):
+    def keys(self, pattern=None):
         """Return a iterable of all available keys."""
-        return self.gossiper.keys()
+        if pattern is None:
+            return self.gossiper.keys()
+        else:
+            keys = self.gossiper.keys()
+            return [key for key in keys
+                    if fnmatch.fnmatch(key, pattern)]
 
     def __contains__(self, key):
-        return key in self.storage
+        return key in self.keys()
 
     def timestamp_for_key(self, key):
-        return self.storage[key][0]
-    
+        return self._storage[key][0]
+
     def synchronize_keys_with_peer(self, peer):
         """Synchronize keys with C{peer}.
 

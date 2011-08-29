@@ -69,7 +69,7 @@ class Scuttle(object):
     def update_known_state(self, deltas):
         for peer, key, value, version in deltas:
             self.peers[peer].update_with_delta(
-                key, value, version)
+                str(key), value, version)
 
     def fetch_deltas(self, requests):
         deltas = []

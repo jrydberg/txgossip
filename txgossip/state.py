@@ -60,7 +60,7 @@ class PeerState(object):
 
     def set_key(self, k, v, n):
         self.attrs[k] = (v, n)
-        self.participant.value_changed(self.name, k, v)
+        self.participant.value_changed(self.name, str(k), v)
 
     def beat_that_heart(self):
         self.heart_beat_version += 1
