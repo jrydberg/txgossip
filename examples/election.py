@@ -38,6 +38,7 @@ class LeaderElectionParticipant(object):
     def __init__(self, name):
         self.name = name
         self._election_timeout = None
+        self._start_election()
 
     def value_changed(self, peer, key, value):
         if key == '__heartbeat__':
@@ -86,7 +87,7 @@ class LeaderElectionParticipant(object):
     def _start_election(self):
         if self._election_timeout is not None:
             self._election_timeout.cancel()
-        self._election_timeout = reactor.callLater(2, self._vote)
+        self._election_timeout = reactor.callLater(5, self._vote)
 
     def peer_alive(self, peer):
         """The gossip tells us that there's a new peer."""

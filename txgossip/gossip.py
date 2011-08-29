@@ -138,6 +138,9 @@ class Gossiper(DatagramProtocol):
     def get_local_value(self, key):
         return self.state.attrs[key][0]
 
+    def keys(self):
+        return self.state.attrs.keys()
+
     def get_peer_value(self, peer, key):
         return self.peers[peer].attrs[key][0]
 

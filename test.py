@@ -25,10 +25,12 @@ class Participant:
                 #print "DONE"
         if key == '/leader-election/vote':
             try:
-                vote = self.gossiper.get_local_value('/leader-election/vote')
+                vote = self.gossiper.get_local_value(
+                            '/leader-election/vote')
                 # check consensus:
                 for peer in self.gossiper.live_peers():
-                    v = self.gossiper.get_peer_value(peer, '/leader-election/vote')
+                    v = self.gossiper.get_peer_value(
+                            peer, '/leader-election/vote')
                     if v != vote:
                         #print "no consensus", peer, "voted on", v, "(i like", vote, ")"
                         return
@@ -60,10 +62,11 @@ class Participant:
     def _vote(self):
         self._election_timeout = None
         suggested_peer = self.gossiper.name
-        arrogance = self.gossiper.get_local_value('/leader-election/priority')
+        arrogance = self.gossiper.get_local_value(
+                '/leader-election/priority')
         for peer in self.gossiper.live_peers():
-            p = self.gossiper.get_peer_value(peer, '/leader-election/priority')
-            #print self.name, "local arrogance is", repr(arrogance), "where", peer, "has", repr(p), p > arrogance
+            p = self.gossiper.get_peer_value(
+                    peer, '/leader-election/priority')
             if p > arrogance:
                 suggested_peer = peer
                 arrogance = p
@@ -114,7 +117,8 @@ pending = []
 
 def kill_some():
     if len(members) > (CNT / 2):
-        i = random.randint(0, len(members) - 1)
+        #i = random.randint(0, len(members) - 1)
+        i = len(members) - 1
         gossiper, p, participant = members.pop(i)
         print "killing", p.getHost()
         p.stopListening()
