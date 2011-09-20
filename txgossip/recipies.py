@@ -1,5 +1,4 @@
 # Copyright (C) 2011 Johan Rydberg
-# Copyright (C) 2010 Bob Potter
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation files
@@ -46,11 +45,16 @@ class LeaderElectionMixin:
     VOTE_KEY = 'leader:vote'
     LEADER_KEY = 'leader:leader'
 
-    VOTE_DELAY = 5
-
-    def __init__(self, clock):
+    def __init__(self, clock, vote_delay=5):
         self.clock = clock
         self._election_timeout = None
+        self._gossiper = None
+        self.is_leader = None
+        self.vote_delay = vote_delay
+
+    def make_connection(self, gossiper):
+        self._gossiper = gossiper
+        self.start_election()
 
     def _check_consensus(self, key):
         """Check if all peers have the same value for C{key}.
@@ -58,17 +62,14 @@ class LeaderElectionMixin:
         Return the value if they all have the same value, otherwise
         return C{None}.
         """
-        try:
-            correct = self.gossiper.get_local_value(key)
-            for peer in self.gossiper.live_peers():
-                value = self.gossiper.get_peer_value(peer, key)
-                if value != correct:
-                    return None
-        except KeyError:
-            # One peer did not even have the key.
-            return None
-        else:
-            return correct
+        correct = self._gossiper.get(key)
+        for peer in self._gossiper.live_peers:
+            if not key in peer.keys():
+                return None
+            value = peer.get(key)
+            if value != correct:
+                return None
+        return correct
 
     def value_changed(self, peer, key, value):
         """Inform about a change of a key-value pair.
@@ -83,13 +84,12 @@ class LeaderElectionMixin:
         if key == self.VOTE_KEY:
             leader = self._check_consensus(self.VOTE_KEY)
             if leader:
-                self.gossiper.set_local_state(
-                    self.LEADER_KEY, leader)
+                self._gossiper.set(self.LEADER_KEY, leader)
         elif key == self.LEADER_KEY:
             leader = self._check_consensus(self.LEADER_KEY)
             if leader:
                 self.leader_elected(
-                    self.gossiper.name == leader, leader)
+                    self._gossiper.name == leader, leader)
         elif key == self.PRIO_KEY:
             self.start_election()
 
@@ -98,24 +98,16 @@ class LeaderElectionMixin:
     def _vote(self):
         """Perform an election."""
         self._election_timeout = None
-        print "VOTE"
 
         # Check if we're one of the peers that would like to become
         # master.
-        vote, currp = None, None
-        try:
-            curr = self.gossiper.get_local_value(self.PRIO_KEY)
-            if curr is not None:
-                vote = self.gossiper.name
-        except KeyError:
-            pass
+        vote = None
+        curr = self._gossiper.get(self.PRIO_KEY)
+        if curr is not None:
+            vote = self._gossiper
 
-        for peer in self.gossiper.live_peers():
-            try:
-                prio = self.gossiper.get_peer_value(
-                    peer, self.PRIO_KEY)
-            except KeyError:
-                continue
+        for peer in self._gossiper.live_peers:
+            prio = peer.get(self.PRIO_KEY)
             if prio is None:
                 # This peer did not want to become leader.
                 continue
@@ -127,15 +119,9 @@ class LeaderElectionMixin:
                 vote = peer
             elif prio == curr:
                 # We need to break the tie.
-                if hash(peer) > hash(vote):
+                if hash(peer.name) > hash(vote.name):
                     vote = peer
-
-        # See if there's a need to change our vote, or if we'll stand
-        # by our last vote.
-        #if self.VOTE_KEY in self.gossiper.keys():
-        #    if self.gossiper.get_local_value(self.VOTE_KEY) == vote:
-        #        return
-        self.gossiper.set_local_state(self.VOTE_KEY, vote)
+        self._gossiper.set(self.VOTE_KEY, vote.name)
 
     def start_election(self):
         """Start an election.
@@ -146,10 +132,9 @@ class LeaderElectionMixin:
 
         It is safe to call this while an election is taking place.
         """
-        print "start election"
         if self._election_timeout is not None:
             self._election_timeout.cancel()
-        self._election_timeout = self.clock.callLater(self.VOTE_DELAY,
+        self._election_timeout = self.clock.callLater(self.vote_delay,
                 self._vote)
 
     def leader_elected(self, is_leader, leader):
@@ -158,13 +143,22 @@ class LeaderElectionMixin:
         @param is_leader: C{True} if this peer is the leader.
         @param leader: The address of the peer that is the leader.
         """
+        self.is_leader = is_leader
+
+    def peer_dead(self, peer):
+        """A peer is dead."""
+        self.start_election()
+
+    def peer_alive(self, peer):
+        """A peer is alive."""
+        self.start_election()
 
 
 class KeyStoreMixin:
-    """."""
+    """Mixin that implements a distributed key-value store."""
 
     def __init__(self, clock, storage, ignore_keys=[]):
-        """
+        """Initialize key-value store mixin.
 
         @param clock: Something that can report the time, normally a
             Twisted reactor.
@@ -176,43 +170,45 @@ class KeyStoreMixin:
         self.clock = clock
         self._storage = storage
         self._ignore_keys = ignore_keys
+        self._gossiper = None
 
-    def remote_peer_changed_value(self, peer, key, timestamp_value):
-        """A remote peer changed its value."""
-        if key in self._ignore_keys:
-            return
-        timestamp, value = timestamp_value
+    def make_connection(self, gossiper):
+        self._gossiper = gossiper
+
+    def persist_key_value(self, key, timestamped_value):
+        self._storage[key] = timestamped_value
+        if hasattr(self._storage, 'sync'):
+            self._storage.sync()
+
+    def replicate_key_value(self, peer, key, timestamped_value):
+        timestamp, value = timestamped_value
         if key in self._storage:
             current_timestamp, current_value = self._storage[key]
             if timestamp <= current_timestamp:
                 return
         # We replicate the value.
-        self.gossiper.set_local_state(key, timestamp_value)
-
-    def persist_value(self, key, value):
-        if key in self._ignore_keys:
-            return
-        self._storage[key] = value
+        self._gossiper.set(key, timestamped_value)
 
     def value_changed(self, peer, key, timestamp_value):
         """A peer has changed its value."""
-        if key == '__heartbeat__':
-            # We do not care about updates to the heartbeat value.
+        if key == '__heartbeat__' or key in self._ignore_keys:
             return
-        if peer != self.gossiper.name:
-            self.remote_peer_changed_value(peer, key, timestamp_value)
+        if peer.name == self._gossiper.name:
+            self.persist_key_value(key, timestamp_value)
         else:
-            self.persist_value(key, timestamp_value)
+            self.replicate_key_value(peer, key, timestamp_value)
+
+    def set(self, key, value):
+        self._gossiper.set(key, [self.clock.seconds(), value])
 
     def __setitem__(self, key, value):
-        self.gossiper.set_local_state(key,
-            [self.clock.seconds(), value])
+        self.set(key, value)
 
     def __getitem__(self, key):
-        return self._storage[key][1]
+        return self._gossiper.get(key)[1]
 
     def get(self, key, default=None):
-        if key in self._storage:
+        if key in self.keys():
             return self[key]
         return default
 
@@ -222,30 +218,22 @@ class KeyStoreMixin:
     def keys(self, pattern=None):
         """Return a iterable of all available keys."""
         if pattern is None:
-            return self.gossiper.keys()
+            return self._gossiper.keys()
         else:
-            keys = self.gossiper.keys()
+            keys = self._gossiper.keys()
             return [key for key in keys
                     if fnmatch.fnmatch(key, pattern)]
+
+    def load_from(self, storage):
+        for key in storage:
+            if key not in self._ignore_keys:
+                self._gossiper.set(key, storage[key])
 
     def __contains__(self, key):
         return key in self.keys()
 
-    def timestamp_for_key(self, key):
-        return self._storage[key][0]
+    def peer_dead(self, peer):
+        """A peer is dead."""
 
-    def synchronize_keys_with_peer(self, peer):
-        """Synchronize keys with C{peer}.
-
-        Will iterate through all the keys that C{peer} has and see if
-        there's some values that are newer than ours.
-        """
-        for key in self.gossiper.get_peer_keys(peer):
-            if key in self._ignore_keys or key == '__heartbeat__':
-                continue
-            timestamp, value = self.gossiper.get_peer_value(peer, key)
-            if key in self._storage:
-                current_timestamp, current_value = self._storage[key]
-                if timestamp <= current_timestamp:
-                    continue
-            self.gossiper.set_local_state(key, [timestamp, value])
+    def peer_alive(self, peer):
+        """A peer is alive."""
