@@ -67,8 +67,16 @@ class PeerState(object):
     def __setitem__(self, key, value):
         self.update_local(key, value)
 
+    def set(self, key, value):
+        self.update_local(key, value)
+
     def __getitem__(self, key):
         return self.attrs[key][0]
+
+    def get(self, key, default=None):
+        if key in self.attrs:
+            return self.attrs[key][0]
+        return default
 
     def has_key(self, key):
         return key in self.attrs
@@ -82,7 +90,7 @@ class PeerState(object):
 
     def set_key(self, k, v, n):
         self.attrs[k] = (v, n)
-        self.participant.value_changed(self.name, str(k), v)
+        self.participant.value_changed(self, str(k), v)
 
     def beat_that_heart(self):
         self.heart_beat_version += 1
@@ -111,9 +119,9 @@ class PeerState(object):
     def mark_alive(self):
         alive, self.alive = self.alive, True
         if not alive:
-            self.participant.peer_alive(self.name)
+            self.participant.peer_alive(self)
 
     def mark_dead(self):
         if self.alive:
             self.alive = False
-            self.participant.peer_dead(self.name)
+            self.participant.peer_dead(self)
