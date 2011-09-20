@@ -212,9 +212,6 @@ class KeyStoreMixin:
             return self[key]
         return default
 
-    def set(self, key, value):
-        self[key] = value
-
     def keys(self, pattern=None):
         """Return a iterable of all available keys."""
         if pattern is None:
