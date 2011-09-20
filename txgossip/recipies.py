@@ -46,6 +46,8 @@ class LeaderElectionMixin:
     VOTE_KEY = 'leader:vote'
     LEADER_KEY = 'leader:leader'
 
+    VOTE_DELAY = 5
+
     def __init__(self, clock):
         self.clock = clock
         self._election_timeout = None
@@ -96,6 +98,7 @@ class LeaderElectionMixin:
     def _vote(self):
         """Perform an election."""
         self._election_timeout = None
+        print "VOTE"
 
         # Check if we're one of the peers that would like to become
         # master.
@@ -129,9 +132,9 @@ class LeaderElectionMixin:
 
         # See if there's a need to change our vote, or if we'll stand
         # by our last vote.
-        if self.VOTE_KEY in self.gossiper.keys():
-            if self.gossiper.get_local_value(self.VOTE_KEY) == vote:
-                return
+        #if self.VOTE_KEY in self.gossiper.keys():
+        #    if self.gossiper.get_local_value(self.VOTE_KEY) == vote:
+        #        return
         self.gossiper.set_local_state(self.VOTE_KEY, vote)
 
     def start_election(self):
@@ -143,9 +146,11 @@ class LeaderElectionMixin:
 
         It is safe to call this while an election is taking place.
         """
+        print "start election"
         if self._election_timeout is not None:
             self._election_timeout.cancel()
-        self._election_timeout = self.clock.callLater(5, self._vote)
+        self._election_timeout = self.clock.callLater(self.VOTE_DELAY,
+                self._vote)
 
     def leader_elected(self, is_leader, leader):
         """Notifcation about leader election result.
@@ -172,21 +177,36 @@ class KeyStoreMixin:
         self._storage = storage
         self._ignore_keys = ignore_keys
 
-    def value_changed(self, peer, key, timestamp_value):
-        """A peer has changed its value."""
-        if key == '__heartbeat__':
-            # We do not care about updates to the heartbeat value.
+    def remote_peer_changed_value(self, peer, key, timestamp_value):
+        """A remote peer changed its value."""
+        if key in self._ignore_keys:
             return
         timestamp, value = timestamp_value
         if key in self._storage:
             current_timestamp, current_value = self._storage[key]
             if timestamp <= current_timestamp:
                 return
-        self._storage[key] = (timestamp, value)
+        # We replicate the value.
+        self.gossiper.set_local_state(key, timestamp_value)
+
+    def persist_value(self, key, value):
+        if key in self._ignore_keys:
+            return
+        self._storage[key] = value
+
+    def value_changed(self, peer, key, timestamp_value):
+        """A peer has changed its value."""
+        if key == '__heartbeat__':
+            # We do not care about updates to the heartbeat value.
+            return
+        if peer != self.gossiper.name:
+            self.remote_peer_changed_value(peer, key, timestamp_value)
+        else:
+            self.persist_value(key, timestamp_value)
 
     def __setitem__(self, key, value):
         self.gossiper.set_local_state(key,
-            (self.clock.seconds(), value))
+            [self.clock.seconds(), value])
 
     def __getitem__(self, key):
         return self._storage[key][1]
@@ -195,6 +215,9 @@ class KeyStoreMixin:
         if key in self._storage:
             return self[key]
         return default
+
+    def set(self, key, value):
+        self[key] = value
 
     def keys(self, pattern=None):
         """Return a iterable of all available keys."""
@@ -218,7 +241,11 @@ class KeyStoreMixin:
         there's some values that are newer than ours.
         """
         for key in self.gossiper.get_peer_keys(peer):
-            if key in self._ignore_keys:
+            if key in self._ignore_keys or key == '__heartbeat__':
                 continue
-            self.value_changed(peer, key, self.gossiper.get_peer_value(
-                    peer, key))
+            timestamp, value = self.gossiper.get_peer_value(peer, key)
+            if key in self._storage:
+                current_timestamp, current_value = self._storage[key]
+                if timestamp <= current_timestamp:
+                    continue
+            self.gossiper.set_local_state(key, [timestamp, value])

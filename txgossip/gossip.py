@@ -41,7 +41,7 @@ def _address_to_peer_name(address):
 
 class Gossiper(DatagramProtocol):
 
-    def __init__(self, clock, name, participant):
+    def __init__(self, clock, name, participant, phi=8):
         self.state = PeerState(clock, name, participant)
         self.peers = {}
         self.name = name
@@ -53,6 +53,7 @@ class Gossiper(DatagramProtocol):
         self.clock = clock
         self.participant = participant
         self.participant.gossiper = self
+        self._phi = phi
 
     def handle_new_peers(self, seeds):
         #print self.name, "HANDLE NEW", seeds
@@ -60,7 +61,7 @@ class Gossiper(DatagramProtocol):
             if peer_name in self.peers:
                 continue
             self.peers[peer_name] = PeerState(self.clock,
-                 peer_name, self.participant)
+                 peer_name, self.participant, PHI=self._phi)
 
     def startProtocol(self):
         self._heart_beat_timer.start(1, now=True)
@@ -88,7 +89,8 @@ class Gossiper(DatagramProtocol):
             self.gossip_with_peer(random.choice(dead_peers))
 
         for state in self.peers.values():
-            state.check_suspected()
+            if state.name != self.name:
+                state.check_suspected()
 
     def request_message(self):
         return json.dumps({
@@ -96,7 +98,8 @@ class Gossiper(DatagramProtocol):
             })
 
     def gossip_with_peer(self, peer):
-        #print self.name, "will gossip with", peer
+        print self.name, "will gossip with", peer
+        assert peer != self.name, "cannot gossip with self"
         self.transport.write(self.request_message(),
             _address_from_peer_name(peer))
 

@@ -25,9 +25,8 @@ from txgossip.detector import FailureDetector
 
 
 class PeerState(object):
-    PHI = 8
 
-    def __init__(self, clock, name, participant):
+    def __init__(self, clock, name, participant, PHI=8):
         self.clock = clock
         self.participant = participant
         self.max_version_seen = 0
@@ -36,6 +35,7 @@ class PeerState(object):
         self.alive = False
         self.heart_beat_version = 0
         self.name = name
+        self.PHI = PHI
 
     def update_with_delta(self, k, v, n):
         """."""
