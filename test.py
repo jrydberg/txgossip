@@ -1,4 +1,4 @@
-from txgossip.gossip import Gossiper, _address_to_peer_name
+from txgossip.gossip import Gossiper, _address_to_peer_name, Participant as _Participant
 from twisted.internet import reactor
 import random
 
@@ -7,7 +7,7 @@ CNT = 20
 cnt = 0
 
 
-class Participant:
+class Participant(_Participant):
 
     def __init__(self, name):
         self.name = name
@@ -25,12 +25,11 @@ class Participant:
                 #print "DONE"
         if key == '/leader-election/vote':
             try:
-                vote = self.gossiper.get_local_value(
+                vote = self.gossiper.get(
                             '/leader-election/vote')
                 # check consensus:
-                for peer in self.gossiper.live_peers():
-                    v = self.gossiper.get_peer_value(
-                            peer, '/leader-election/vote')
+                for peer in self.gossiper.live_peers:
+                    v = peer.get('/leader-election/vote')
                     if v != vote:
                         #print "no consensus", peer, "voted on", v, "(i like", vote, ")"
                         return
@@ -38,14 +37,14 @@ class Participant:
                 #print "key error in vote"
                 return
             #print "got consensus on votes"
-            vote = self.gossiper.set_local_state(
+            vote = self.gossiper.set(
                 '/leader-election/master', v)
         elif key == '/leader-election/master':
             try:
-                vote = self.gossiper.get_local_value('/leader-election/master')
+                vote = self.gossiper.get('/leader-election/master')
                 # check consensus:
-                for peer in self.gossiper.live_peers():
-                    v = self.gossiper.get_peer_value(peer, '/leader-election/master')
+                for peer in self.gossiper.live_peers:
+                    v = peer.get('/leader-election/master')
                     if v != vote:
                         return
             except KeyError:
@@ -53,8 +52,8 @@ class Participant:
             print self.name, "WE GOT A NEW MASTER", vote, reactor.seconds()
 
     def peer_alive(self, peer):
-        print self.name, "thinks", peer, "is alive", self.gossiper.get_peer_keys(peer)
-        print self.gossiper.get_peer_value(peer, '/leader-election/priority')
+        print self.name, "thinks", peer.name, "is alive", peer.keys()
+        print peer.get('/leader-election/priority')
         self._start_election()
 
     _election_timeout = None
@@ -62,24 +61,23 @@ class Participant:
     def _vote(self):
         self._election_timeout = None
         suggested_peer = self.gossiper.name
-        arrogance = self.gossiper.get_local_value(
+        arrogance = self.gossiper.get(
                 '/leader-election/priority')
-        for peer in self.gossiper.live_peers():
-            p = self.gossiper.get_peer_value(
-                    peer, '/leader-election/priority')
+        for peer in self.gossiper.live_peers:
+            p = peer.get('/leader-election/priority')
             if p > arrogance:
-                suggested_peer = peer
+                suggested_peer = peer.name
                 arrogance = p
         print self.name, "votes for", suggested_peer
         try:
-            current_master = self.gossiper.get_local_value(
+            current_master = self.gossiper.get(
                 '/leader-election/vote')
             if current_master == suggested_peer:
                 #print self.name, "no need to update master"
                 return
         except KeyError:
             pass
-        self.gossiper.set_local_state('/leader-election/vote', suggested_peer)
+        self.gossiper.set('/leader-election/vote', suggested_peer)
 
     def _start_election(self):
         if self._election_timeout is not None:
@@ -87,7 +85,7 @@ class Participant:
         self._election_timeout = reactor.callLater(5, self._vote)
 
     def peer_dead(self, peer):
-        print self.name, "thinks", peer, "is dead"
+        print self.name, "thinks", peer.name, "is dead"
         self._start_election()
 
     def peer_stable(self, peer):
@@ -98,20 +96,20 @@ members = []
 
 for i in range(0, CNT):
     participant = Participant('127.0.0.1:%d' % (9000+i))
-    gossiper = Gossiper(reactor, '127.0.0.1:%d' % (9000+i), participant)
-    gossiper.set_local_state('/leader-election/priority', i)
+    gossiper = Gossiper(reactor, participant, '127.0.0.1')
+    gossiper.set('/leader-election/priority', i)
     p = reactor.listenUDP(9000+i, gossiper)
     members.append((gossiper, p, participant))
 
 for i in range(1, CNT):
-    members[i][0].handle_new_peers(['127.0.0.1:9000'])
+    members[i][0].seed(['127.0.0.1:9000'])
 
 seed = members[0][0]
 
 def prop_test():
     print "START PROP TEST"
     print reactor.seconds()
-    seed.set_local_state('x', 'value')
+    seed.set('x', 'value')
 
 pending = []
 
@@ -125,7 +123,7 @@ def kill_some():
     #reactor.callLater(5, kill_some)
 
 def test():
-    seed.set_local_state('test', 'value')
+    seed.set('test', 'value')
     reactor.callLater(5, prop_test)
     reactor.callLater(30, kill_some)
 
